@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LinkType {
+  primary
+  secondary
+  ghost
+}
+
+enum NicheType {
+  real_estate
+  saas_founder
+  photographer
+  coach
+  consultant
+  musician
+  lawyer
+  freelancer
+  fitness
+  therapist
+  other
+}
+
+enum PlanType {
+  free
+  pro
+  enterprise
+}
+
+enum ProfileTheme {
+  dark
+  light
+  midnight
+  rose
+  ember
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?
+  plan          PlanType  @default(free)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile       Profile?
+  accounts      Account[]
+  sessions      Session[]
+  analytics     ProfileView[]
+
+  @@index([email])
+}
+
+model Profile {
+  id          String       @id @default(cuid())
+  username    String       @unique
+  name        String
+  role        String       @default("")
+  bio         String       @default("")
+  accent      String       @default("#E11D48")
+  avatar      String       @default("")
+  niche       NicheType    @default(other)
+  theme       ProfileTheme @default(dark)
+  isPublic    Boolean      @default(true)
+  tagline     String       @default("")
+  location    String       @default("")
+  website     String       @default("")
+  totalClicks Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  userId      String       @unique
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  links       Link[]
+  views       ProfileView[]
+  socials     Social[]
+
+  @@index([username])
+  @@index([niche])
+}
+
+model Link {
+  id          String    @id @default(cuid())
+  label       String
+  url         String
+  type        LinkType  @default(secondary)
+  order       Int       @default(0)
+  clicks      Int       @default(0)
+  active      Boolean   @default(true)
+  thumbnail   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  profileId   String
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  clickEvents LinkClick[]
+
+  @@index([profileId, order])
+  @@index([profileId, active])
+}
+
+model LinkClick {
+  id        String   @id @default(cuid())
+  linkId    String
+  link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  country   String?
+  device    String?
+  referrer  String?
+  createdAt DateTime @default(now())
+
+  @@index([linkId, createdAt])
+}
+
+model ProfileView {
+  id        String   @id @default(cuid())
+  profileId String
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  country   String?
+  device    String?
+  referrer  String?
+  createdAt DateTime @default(now())
+
+  @@index([profileId, createdAt])
+}
+
+model Social {
+  id        String   @id @default(cuid())
+  platform  String
+  handle    String
+  url       String
+  order     Int      @default(0)
+  profileId String
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, platform])
+  @@index([profileId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
