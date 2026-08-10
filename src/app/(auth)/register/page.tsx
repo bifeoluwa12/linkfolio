@@ -7,6 +7,17 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { slugify } from "@/lib/utils";
 
+// ── Regex validators — same rules as the API ─────────────────────────────────
+const EMAIL_RE    = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+const USERNAME_RE = /^[a-z0-9][a-z0-9\-]{1,28}[a-z0-9]$/;
+const NAME_RE     = /^[\p{L}\p{M}\s'\-\.]{2,60}$/u;
+
+const RESERVED = new Set([
+  "admin","api","dashboard","login","register","logout","settings",
+  "profile","help","support","about","terms","privacy","app","www",
+  "mail","blog","docs","status","linkfolio",
+]);
+
 const NICHES = [
   { value: "real_estate",  label: "🏠 Real Estate Agent" },
   { value: "saas_founder", label: "🚀 SaaS Founder" },
@@ -35,7 +46,7 @@ function RegisterForm() {
     username: "", niche: "", tagline: "",
   });
 
-  // If landing page passed a niche via URL, jump to step 2 with it pre-selected
+  // Pre-select niche if passed from landing page
   useEffect(() => {
     const n = searchParams.get("niche");
     if (n && NICHES.find(x => x.value === n)) {
@@ -51,24 +62,29 @@ function RegisterForm() {
 
   function handleNameChange(name: string) {
     setForm(f => ({
-      ...f,
-      name,
-      username: (!f.username || f.username === slugify(f.name))
-        ? slugify(name)
-        : f.username,
+      ...f, name,
+      username: (!f.username || f.username === slugify(f.name)) ? slugify(name) : f.username,
     }));
     setError("");
   }
 
+  // ── Client-side validation mirrors server rules exactly ───────────────────
   function validateStep(): string {
     if (step === 0) {
-      if (!form.name.trim()) return "Enter your full name.";
-      if (!form.email.trim()) return "Enter your email.";
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return "Enter a valid email.";
+      if (!form.name.trim()) return "Full name is required.";
+      if (!NAME_RE.test(form.name.trim())) return "Name contains invalid characters.";
+      if (!form.email.trim()) return "Email address is required.";
+      if (!EMAIL_RE.test(form.email.trim())) return "Enter a valid email address.";
+      if (!form.password) return "Password is required.";
       if (form.password.length < 8) return "Password must be at least 8 characters.";
+      if (form.password.length > 128) return "Password is too long.";
     }
     if (step === 1) {
-      if (!form.username || form.username.length < 3) return "Username must be at least 3 characters.";
+      if (!form.username) return "Username is required.";
+      if (!USERNAME_RE.test(form.username)) {
+        return "Username must be 3–30 characters, lowercase letters, numbers, and hyphens only. Cannot start or end with a hyphen.";
+      }
+      if (RESERVED.has(form.username)) return "That username is reserved. Please choose another.";
     }
     if (step === 2) {
       if (!form.niche) return "Pick your niche to continue.";
@@ -79,34 +95,47 @@ function RegisterForm() {
   function nextStep() {
     const err = validateStep();
     if (err) { setError(err); return; }
+    setError("");
     setStep(s => s + 1);
   }
 
   async function handleSubmit() {
     const err = validateStep();
     if (err) { setError(err); return; }
+
+    // Lock button — prevents any duplicate submissions
     setLoading(true);
     setError("");
 
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        name:     form.name.trim(),
+        email:    form.email.trim().toLowerCase(),
+        password: form.password,
+        username: form.username,
+        niche:    form.niche,
+        tagline:  form.tagline.trim(),
+      }),
     });
 
     const data = await res.json();
 
     if (!res.ok) {
       setLoading(false);
-      setError(data.error ?? "Something went wrong.");
-      if (data.error?.toLowerCase().includes("email")) setStep(0);
+      setError(data.error ?? "Something went wrong. Please try again.");
+      // Route user back to the step that has the error field
+      if (data.error?.toLowerCase().includes("email"))    setStep(0);
+      if (data.error?.toLowerCase().includes("password")) setStep(0);
+      if (data.error?.toLowerCase().includes("name") && !data.error.includes("user")) setStep(0);
       if (data.error?.toLowerCase().includes("username")) setStep(1);
       return;
     }
 
-    // Account created — sign them in immediately, no separate login step
+    // Account created — sign in immediately, no separate login step
     const signInResult = await signIn("credentials", {
-      email: form.email,
+      email:    form.email.trim().toLowerCase(),
       password: form.password,
       redirect: false,
     });
@@ -114,13 +143,12 @@ function RegisterForm() {
     setLoading(false);
 
     if (signInResult?.error) {
-      // Fallback: account exists but auto-login failed for some reason —
-      // send them to login with a flag so they're not stuck on a dead page
+      // Edge case: account created but auto-login failed
       router.push("/login?registered=1");
       return;
     }
 
-    // Straight into their brand-new profile editor
+    // Straight into their new profile studio
     router.push("/dashboard");
     router.refresh();
   }
@@ -129,8 +157,8 @@ function RegisterForm() {
     width: "100%", background: "rgba(255,255,255,0.04)",
     border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
     padding: "13px 16px", color: "#fff", fontSize: 14,
-    outline: "none", fontFamily: "monospace", letterSpacing: "0.02em",
-    transition: "border-color 0.2s", boxSizing: "border-box",
+    outline: "none", fontFamily: "monospace", boxSizing: "border-box",
+    transition: "border-color 0.2s",
   };
 
   const labelBase: React.CSSProperties = {
@@ -141,33 +169,25 @@ function RegisterForm() {
 
   return (
     <div style={{
-      minHeight: "100vh", background: "#080004",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      padding: "24px", fontFamily: "'Georgia', serif",
+      minHeight: "100vh", background: "#080004", fontFamily: "'Georgia', serif",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
     }}>
       <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(16px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
         input:focus { border-color: #E11D48 !important; }
         input::placeholder { color: rgba(255,255,255,0.2); }
         * { box-sizing: border-box; }
       `}</style>
 
-      <div style={{
-        position: "fixed", inset: 0, pointerEvents: "none",
-        background: "radial-gradient(ellipse at 60% 0%, rgba(225,29,72,0.12) 0%, transparent 60%)",
-      }} />
+      <div style={{ position: "fixed", inset: 0, pointerEvents: "none",
+        background: "radial-gradient(ellipse at 60% 0%, rgba(225,29,72,0.12) 0%, transparent 60%)" }} />
 
-      <div style={{ width: "100%", maxWidth: 480, position: "relative", zIndex: 10, animation: "fadeUp 0.5s ease both" }}>
+      <div style={{ width: "100%", maxWidth: 480, position: "relative", zIndex: 10 }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{
-            fontSize: 12, letterSpacing: "0.35em", fontFamily: "monospace",
+            fontSize: 12, letterSpacing: "0.35em", fontFamily: "monospace", fontWeight: 700,
             background: "linear-gradient(135deg, #FF6B35, #E11D48, #FB7185)",
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            fontWeight: 700, marginBottom: 24,
+            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", marginBottom: 24,
           }}>◆ LINKFOLIO</div>
           <h1 style={{ fontSize: 30, fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.8px", color: "#fff" }}>
             {step === 0 && "Create your account"}
@@ -181,7 +201,7 @@ function RegisterForm() {
           </p>
         </div>
 
-        {/* Step bar */}
+        {/* Step progress bar */}
         <div style={{ display: "flex", gap: 6, marginBottom: 32 }}>
           {STEPS.map((s, i) => (
             <div key={s} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
@@ -194,7 +214,6 @@ function RegisterForm() {
               <span style={{
                 fontSize: 9, fontFamily: "monospace", letterSpacing: "0.15em",
                 color: i <= step ? "#E11D48" : "rgba(255,255,255,0.2)",
-                transition: "color 0.3s",
               }}>{s.toUpperCase()}</span>
             </div>
           ))}
@@ -208,39 +227,56 @@ function RegisterForm() {
           boxShadow: "0 0 60px rgba(225,29,72,0.06), 0 24px 60px rgba(0,0,0,0.4)",
         }}>
 
-          {/* STEP 0 */}
+          {/* ── STEP 0: Account ── */}
           {step === 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               <div>
                 <label style={labelBase}>Full Name</label>
-                <input style={inputBase} value={form.name}
+                <input
+                  style={inputBase} value={form.name} autoFocus
                   onChange={e => handleNameChange(e.target.value)}
-                  placeholder="Alex Morgan" autoFocus />
+                  placeholder="Alex Morgan" maxLength={60}
+                  onKeyDown={e => { if (e.key === "Enter" && !loading) nextStep(); }}
+                />
               </div>
               <div>
                 <label style={labelBase}>Email Address</label>
-                <input style={inputBase} type="email" value={form.email}
+                <input
+                  style={inputBase} type="email" value={form.email}
                   onChange={e => update("email", e.target.value)}
-                  placeholder="alex@example.com" />
+                  placeholder="alex@example.com" autoComplete="email"
+                  onKeyDown={e => { if (e.key === "Enter" && !loading) nextStep(); }}
+                />
               </div>
               <div>
                 <label style={labelBase}>Password</label>
-                <input style={inputBase} type="password" value={form.password}
+                <input
+                  style={inputBase} type="password" value={form.password}
                   onChange={e => update("password", e.target.value)}
-                  placeholder="Min 8 characters"
-                  onKeyDown={e => e.key === "Enter" && nextStep()} />
+                  placeholder="Min 8 characters" maxLength={128}
+                  autoComplete="new-password"
+                  onKeyDown={e => { if (e.key === "Enter" && !loading) nextStep(); }}
+                />
+                {/* Password strength hint */}
+                {form.password.length > 0 && form.password.length < 8 && (
+                  <p style={{ fontSize: 10, color: "#FB7185", fontFamily: "monospace", marginTop: 6 }}>
+                    {8 - form.password.length} more character{8 - form.password.length !== 1 ? "s" : ""} needed
+                  </p>
+                )}
               </div>
             </div>
           )}
 
-          {/* STEP 1 */}
+          {/* ── STEP 1: Username ── */}
           {step === 1 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               <div>
                 <label style={labelBase}>Your Public URL</label>
                 <div style={{
-                  display: "flex", background: "rgba(255,255,255,0.04)",
-                  border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, overflow: "hidden",
+                  display: "flex",
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 10, overflow: "hidden",
                 }}
                   onFocusCapture={e => (e.currentTarget.style.borderColor = "#E11D48")}
                   onBlurCapture={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)")}
@@ -248,33 +284,36 @@ function RegisterForm() {
                   <span style={{
                     padding: "13px 14px", fontSize: 13, fontFamily: "monospace",
                     color: "rgba(255,255,255,0.25)", borderRight: "1px solid rgba(255,255,255,0.08)",
-                    whiteSpace: "nowrap",
+                    whiteSpace: "nowrap", flexShrink: 0,
                   }}>linkfolio.app/</span>
                   <input
                     style={{ ...inputBase, border: "none", borderRadius: 0, background: "transparent" }}
                     value={form.username}
                     onChange={e => update("username", slugify(e.target.value))}
-                    placeholder="alex-morgan" autoFocus
-                    onKeyDown={e => e.key === "Enter" && nextStep()}
+                    placeholder="alex-morgan" autoFocus maxLength={30}
+                    onKeyDown={e => { if (e.key === "Enter" && !loading) nextStep(); }}
                   />
                 </div>
-                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "monospace", marginTop: 8 }}>
-                  Lowercase letters, numbers, and hyphens only.
+                <p style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", fontFamily: "monospace", marginTop: 8 }}>
+                  3–30 characters. Lowercase, numbers, hyphens. Cannot be changed later.
                 </p>
               </div>
-              {form.username && (
+
+              {/* Live preview card */}
+              {form.username && USERNAME_RE.test(form.username) && !RESERVED.has(form.username) && (
                 <div style={{
-                  padding: "14px 16px", background: "rgba(225,29,72,0.05)",
-                  border: "1px solid rgba(225,29,72,0.15)", borderRadius: 10,
-                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "14px 16px",
+                  background: "rgba(225,29,72,0.05)",
+                  border: "1px solid rgba(225,29,72,0.15)",
+                  borderRadius: 10, display: "flex", alignItems: "center", gap: 12,
                 }}>
                   <div style={{
-                    width: 36, height: 36, borderRadius: "50%",
+                    width: 38, height: 38, borderRadius: "50%",
                     background: "linear-gradient(135deg, #C41230, #E11D48)",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 700, color: "#fff", flexShrink: 0,
+                    fontSize: 13, fontWeight: 700, color: "#fff", flexShrink: 0,
                   }}>
-                    {form.name ? form.name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0,2) : "?"}
+                    {form.name ? form.name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2) : "?"}
                   </div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{form.name || "Your Name"}</div>
@@ -282,44 +321,69 @@ function RegisterForm() {
                       linkfolio.app/{form.username}
                     </div>
                   </div>
+                  <div style={{ marginLeft: "auto", fontSize: 9, color: "#4ade80", fontFamily: "monospace" }}>
+                    ✓ AVAILABLE
+                  </div>
+                </div>
+              )}
+
+              {/* Show warning for reserved names */}
+              {form.username && RESERVED.has(form.username) && (
+                <div style={{
+                  padding: "10px 14px", background: "rgba(225,29,72,0.08)",
+                  border: "1px solid rgba(225,29,72,0.25)", borderRadius: 8,
+                  fontSize: 12, color: "#FB7185", fontFamily: "monospace",
+                }}>
+                  ✕ That username is reserved. Please choose another.
                 </div>
               )}
             </div>
           )}
 
-          {/* STEP 2 */}
+          {/* ── STEP 2: Niche ── */}
           {step === 2 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <label style={labelBase}>I am a...</label>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   {NICHES.map(n => (
-                    <button key={n.value} onClick={() => update("niche", n.value)} style={{
-                      padding: "11px 14px", borderRadius: 10, fontSize: 12,
-                      fontFamily: "monospace", textAlign: "left",
-                      cursor: "pointer", transition: "all 0.2s ease",
-                      border: form.niche === n.value ? "1px solid #E11D48" : "1px solid rgba(255,255,255,0.08)",
-                      background: form.niche === n.value ? "rgba(225,29,72,0.12)" : "rgba(255,255,255,0.03)",
-                      color: form.niche === n.value ? "#fff" : "rgba(255,255,255,0.5)",
-                      boxShadow: form.niche === n.value ? "0 0 16px rgba(225,29,72,0.2)" : "none",
-                    }}>{n.label}</button>
+                    <button
+                      key={n.value}
+                      onClick={() => update("niche", n.value)}
+                      style={{
+                        padding: "11px 14px", borderRadius: 10, fontSize: 12,
+                        fontFamily: "monospace", textAlign: "left",
+                        cursor: "pointer", transition: "all 0.2s ease",
+                        border: form.niche === n.value ? "1px solid #E11D48" : "1px solid rgba(255,255,255,0.08)",
+                        background: form.niche === n.value ? "rgba(225,29,72,0.12)" : "rgba(255,255,255,0.03)",
+                        color: form.niche === n.value ? "#fff" : "rgba(255,255,255,0.5)",
+                        boxShadow: form.niche === n.value ? "0 0 16px rgba(225,29,72,0.2)" : "none",
+                      }}
+                    >
+                      {n.label}
+                    </button>
                   ))}
                 </div>
               </div>
               <div>
-                <label style={labelBase}>Your power line <span style={{ color: "rgba(255,255,255,0.2)" }}>(optional)</span></label>
-                <input style={inputBase} value={form.tagline}
-                  onChange={e => update("tagline", e.target.value)}
+                <label style={labelBase}>
+                  Power line{" "}
+                  <span style={{ color: "rgba(255,255,255,0.2)", textTransform: "none" }}>(optional)</span>
+                </label>
+                <input
+                  style={inputBase} value={form.tagline}
+                  onChange={e => update("tagline", e.target.value.slice(0, 60))}
                   placeholder={`e.g. "Closed $4.2M last quarter"`}
-                  maxLength={60} />
+                  maxLength={60}
+                />
                 <p style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", fontFamily: "monospace", marginTop: 6 }}>
-                  Shown under your name on your public profile.
+                  {form.tagline.length}/60 · Shown under your name on your public profile.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Error */}
+          {/* Error display */}
           {error && (
             <div style={{
               marginTop: 16, padding: "10px 14px",
@@ -330,16 +394,24 @@ function RegisterForm() {
             }}>✕ {error}</div>
           )}
 
-          {/* Buttons */}
+          {/* Action buttons */}
           <div style={{ marginTop: 28, display: "flex", gap: 10 }}>
             {step > 0 && (
-              <button onClick={() => { setStep(s => s - 1); setError(""); }} style={{
-                padding: "13px 20px", borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.1)",
-                background: "transparent", color: "rgba(255,255,255,0.4)",
-                fontSize: 13, fontFamily: "monospace", cursor: "pointer",
-              }}>← Back</button>
+              <button
+                onClick={() => { setStep(s => s - 1); setError(""); }}
+                disabled={loading}
+                style={{
+                  padding: "13px 20px", borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "transparent", color: "rgba(255,255,255,0.4)",
+                  fontSize: 13, fontFamily: "monospace", cursor: "pointer",
+                }}
+              >
+                ← Back
+              </button>
             )}
+
+            {/* Primary action — disabled during loading to prevent duplicate calls */}
             <button
               onClick={step < 2 ? nextStep : handleSubmit}
               disabled={loading}
@@ -353,17 +425,23 @@ function RegisterForm() {
                 transition: "all 0.2s",
               }}
             >
-              {loading ? "Creating your profile..." : step < 2 ? `Continue → (${step + 1}/3)` : "Launch my profile →"}
+              {loading
+                ? "Creating your profile…"
+                : step < 2
+                  ? `Continue → (${step + 1}/3)`
+                  : "Launch my profile →"}
             </button>
           </div>
         </div>
 
         <p style={{
-          textAlign: "center", marginTop: 24,
-          fontSize: 12, color: "rgba(255,255,255,0.25)", fontFamily: "monospace",
+          textAlign: "center", marginTop: 24, fontSize: 12,
+          color: "rgba(255,255,255,0.25)", fontFamily: "monospace",
         }}>
           Already have a profile?{" "}
-          <Link href="/login" style={{ color: "#E11D48", textDecoration: "none" }}>Sign in →</Link>
+          <Link href="/login" style={{ color: "#E11D48", textDecoration: "none" }}>
+            Sign in →
+          </Link>
         </p>
       </div>
     </div>
