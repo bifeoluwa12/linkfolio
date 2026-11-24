@@ -1,4 +1,3 @@
-
 import type { Metadata } from "next";
 import { DM_Mono, Sora } from "next/font/google";
 import "./globals.css";

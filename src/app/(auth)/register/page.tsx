@@ -1,4 +1,3 @@
-// src/app/(auth)/register/page.tsx
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
@@ -47,13 +46,13 @@ function RegisterForm() {
   });
 
   // Pre-select niche if passed from landing page
-  useEffect(() => {
-    const n = searchParams.get("niche");
-    if (n && NICHES.find(x => x.value === n)) {
-      setForm(f => ({ ...f, niche: n }));
-      setStep(2);
-    }
-  }, [searchParams]);
+useEffect(() => {
+  const n = searchParams.get("niche");
+
+  if (n && NICHES.find(x => x.value === n)) {
+    setForm(f => ({ ...f, niche: n }));
+  }
+}, [searchParams]);
 
   function update(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }));
@@ -99,39 +98,64 @@ function RegisterForm() {
     setStep(s => s + 1);
   }
 
-  async function handleSubmit() {
-    const err = validateStep();
-    if (err) { setError(err); return; }
+async function handleSubmit() {
+  const err = validateStep();
 
-    // Lock button — prevents any duplicate submissions
-    setLoading(true);
-    setError("");
+  if (err) {
+    setError(err);
+    return;
+  }
 
+  setLoading(true);
+  setError("");
+
+  try {
     const res = await fetch("/api/auth/register", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        name:     form.name.trim(),
-        email:    form.email.trim().toLowerCase(),
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
         password: form.password,
         username: form.username,
-        niche:    form.niche,
-        tagline:  form.tagline.trim(),
+        niche: form.niche,
+        tagline: form.tagline.trim(),
       }),
     });
 
     const data = await res.json();
 
     if (!res.ok) {
-      setLoading(false);
-      setError(data.error ?? "Something went wrong. Please try again.");
-      // Route user back to the step that has the error field
-      if (data.error?.toLowerCase().includes("email"))    setStep(0);
-      if (data.error?.toLowerCase().includes("password")) setStep(0);
-      if (data.error?.toLowerCase().includes("name") && !data.error.includes("user")) setStep(0);
-      if (data.error?.toLowerCase().includes("username")) setStep(1);
+      setError(data.error ?? "Registration failed.");
       return;
     }
+
+    const signInResult = await signIn("credentials", {
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
+      redirect: false,
+    });
+
+    if (signInResult?.error) {
+      router.push("/login?registered=1");
+      return;
+    }
+
+    router.push("/dashboard");
+    router.refresh();
+
+  } catch (error) {
+    console.error("Registration error:", error);
+
+    setError(
+      "Unable to connect to the server. Please try again."
+    );
+
+  } finally {
+    setLoading(false);
+  }
 
     // Account created — sign in immediately, no separate login step
     const signInResult = await signIn("credentials", {

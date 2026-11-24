@@ -1,5 +1,3 @@
-// src/app/api/auth/register/route.ts
-
 import { NextResponse } from "next/server";
 import * as bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
@@ -107,8 +105,35 @@ export async function POST(req: Request) {
       { status: 201 }
     );
 
-  } catch (err) {
+   } catch (err: any) {
     console.error("[POST /api/auth/register]", err);
-    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
+
+    if (err?.code === "P2002") {
+      const field = err.meta?.target;
+
+      if (Array.isArray(field) && field.includes("email")) {
+        return NextResponse.json(
+          { error: "Email already in use." },
+          { status: 409 }
+        );
+      }
+
+      if (Array.isArray(field) && field.includes("username")) {
+        return NextResponse.json(
+          { error: "Username already taken. Try another." },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json(
+        { error: "This information is already registered." },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Something went wrong. Please try again." },
+      { status: 500 }
+    );
   }
 }
