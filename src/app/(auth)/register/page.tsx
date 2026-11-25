@@ -100,11 +100,7 @@ useEffect(() => {
 
 async function handleSubmit() {
   const err = validateStep();
-
-  if (err) {
-    setError(err);
-    return;
-  }
+  if (err) { setError(err); return; }
 
   setLoading(true);
   setError("");
@@ -112,9 +108,7 @@ async function handleSubmit() {
   try {
     const res = await fetch("/api/auth/register", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: form.name.trim(),
         email: form.email.trim().toLowerCase(),
@@ -126,7 +120,6 @@ async function handleSubmit() {
     });
 
     const data = await res.json();
-
     if (!res.ok) {
       setError(data.error ?? "Registration failed.");
       return;
@@ -145,18 +138,12 @@ async function handleSubmit() {
 
     router.push("/dashboard");
     router.refresh();
-
   } catch (error) {
     console.error("Registration error:", error);
-
-    setError(
-      "Unable to connect to the server. Please try again."
-    );
-
+    setError("Unable to connect to the server. Please try again.");
   } finally {
     setLoading(false);
   }
-
     // Account created — sign in immediately, no separate login step
     const signInResult = await signIn("credentials", {
       email:    form.email.trim().toLowerCase(),
